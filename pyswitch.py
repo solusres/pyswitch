@@ -100,6 +100,8 @@ led_array_deque = deque(led_array)
 
 CURSOR_SIZE = 2
 
+REQUEST_DELAY = 0.1 # in seconds
+
 
 def connect_midi():
     # connect MIDI input and output streams
@@ -136,7 +138,10 @@ def read_touch_input(midi_in):
 
     return None
 
-            
+#def set_all(property_, value):
+    #for i in range(1,6):
+     #   b.set_light(i, property_, 
+    
                     
 #  **      **  #
 ## ** MAIN ** ##
@@ -165,7 +170,7 @@ if  __name__ =='__main__':
             draw_bar(midi_out, input_pos, CURSOR_SIZE);
 
             curTime = time.time()
-            if lastTime is None or curTime - lastTime > 0.25:
-                print "Sending request, bri = %s" % (input_pos*2)
-                b.set_group('all', 'bri', input_pos*2, transitiontime=1)
+            if lastTime is None or curTime - lastTime > REQUEST_DELAY:
+                print "%-20s Sending request, bri = %s" % (curTime, input_pos*2)
+                b.set_group('all', 'bri', input_pos*2, transitiontime=0)
                 lastTime = curTime
