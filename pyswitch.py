@@ -1,9 +1,13 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
 from pygame import pypm
 import array
 import time
 from collections import deque
 import sys
-from phue import Bridge
+import phue
+import threading
 
 #
 # BEGIN UTILS PULLED FROM VMeter.net Python Demos
@@ -102,6 +106,8 @@ CURSOR_SIZE = 2
 
 REQUEST_DELAY = 0.1 # in seconds
 
+BRIDGE_IP = "192.168.1.112"
+
 
 def connect_midi():
     # connect MIDI input and output streams
@@ -142,35 +148,121 @@ def read_touch_input(midi_in):
     #for i in range(1,6):
      #   b.set_light(i, property_, 
     
-                    
+class MidiReader(threading.Thread):
+    def __init__(self, control, interval):
+        threading.Thread.__init__(self)
+        self.name = "thread-MidiReader"
+        self.setDaemon(True)
+        self.killed = False
+        self.control = control
+        self.interval = interval
+
+    def run(self):
+        while not self.killed:
+            time.sleep(self.interval)
+            self.control.read()
+
+    def stop(self):
+        self.killed = True
+
+
+class HueUpdater(threading.Thread):
+    def __init__(self, control, interval):
+        threading.Thread.__init__(self)
+        self.name = "thread-HueUpdater"
+        self.setDaemon(True)
+        self.killed = False
+        self.control = control
+        self.interval = interval
+
+    def run(self):
+        while not self.killed:
+            time.sleep(self.interval)
+            self.control.update()
+
+    def stop(self):
+        self.killed = True
+
+#  **                  **  #
+## ** CONTROLLER CLASS ** ##
+#  **                  **  #
+
+class Switch:
+
+    def read(self):
+        input_pos = read_touch_input(self.midi_in)
+        if input_pos is not None:
+            draw_bar(self.midi_out, input_pos, CURSOR_SIZE)
+            self.brightness = input_pos*2
+            #print "Read   : %s" % self.brightness
+            self.dirty = True
+
+    def update(self):
+        if self.dirty:
+            bri = self.brightness
+            self.dirty = False
+            #print "Update : Sending request, bri = %s" % bri
+            
+            if bri == 0:
+                self.lights.on = False
+            else:
+                # transitionTime is in deciseconds!!
+                command = {'bri' : bri, 'on' : True}
+                self.b.set_group(0, command, transitiontime=5)
+
+
+    def __init__(self):
+        # always call this first, or OS may crash when you try to open a stream
+        pypm.Initialize()
+    
+        # wireup input/output
+        # TODO : pull MIDI control into separate class
+        self.midi_out, self.midi_in = connect_midi()
+        
+        # turn off internal LED finger tracking and enable pressure
+        set_LEDs_ignore_touch(self.midi_out)
+        enable_pressure_output(self.midi_out)
+        
+        # TODO : use upnp to get the bridge IP
+        #      : phue attempts to do this, but fails in httplib...
+        self.b = phue.Bridge(BRIDGE_IP)
+        
+        # initialize "all" group
+        self.lights = phue.AllLights(bridge=self.b)
+
+        # initialize internal state
+        self.brightness = self.lights.brightness
+        self.dirty = False
+
+        self.reader = MidiReader(self, interval=.001)
+        self.reader.start()
+
+        self.updater = HueUpdater(self, interval=.1)
+        self.updater.start()
+
+        for i in range(38):
+            led_array_deque[i] = 0
+
+        send_array(led_array_deque, self.midi_out)
+
+        for i in range(19,38):
+            led_array_deque[i] = 1
+            led_array_deque[38-1-i] = 1
+            send_array(led_array_deque, self.midi_out)
+            time.sleep(.05)
+        
+        draw_bar(self.midi_out, self.brightness/2, CURSOR_SIZE)
+
+# CONTROLLER CLASS END #        
+             
+
+
+
 #  **      **  #
 ## ** MAIN ** ##
 #  **      **  #
 
 if  __name__ =='__main__':
-    # always call this first, or OS may crash when you try to open a stream
-    pypm.Initialize()
-
-    # wireup input/output
-    midi_out, midi_in = connect_midi()
-
-    # turn off internal LED finger tracking and enable pressure
-    set_LEDs_ignore_touch(midi_out)
-    enable_pressure_output(midi_out)
-
-    b = Bridge("10.0.77.15")
-    
-    lastTime = None
-    curTime = None
-    
-
+    Switch()
     while True:
-        input_pos = read_touch_input(midi_in)
-        if input_pos is not None:
-            draw_bar(midi_out, input_pos, CURSOR_SIZE);
-
-            curTime = time.time()
-            if lastTime is None or curTime - lastTime > REQUEST_DELAY:
-                print "%-20s Sending request, bri = %s" % (curTime, input_pos*2)
-                b.set_group('all', 'bri', input_pos*2, transitiontime=0)
-                lastTime = curTime
+        time.sleep(10000)
